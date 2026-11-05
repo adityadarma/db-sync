@@ -771,6 +771,8 @@ private struct ApplySummary {
     private var updated: Int { item["update"] as? Int ?? 0 }
     private var deleted: Int { item["delete"] as? Int ?? 0 }
     private var extra: Int { item["extraRows"] as? Int ?? 0 }
+    private var usesBatching: Bool { item["batch"] as? Bool ?? false }
+    private var sourceRowCount: Int { item["sourceRowCount"] as? Int ?? 0 }
     private var kinds: [DataChangeKind] {
         [DataChangeKind(id: "insert", title: L10n.text("Tambah"), count: inserted),
          DataChangeKind(id: "update", title: L10n.text("Ubah"), count: updated),
@@ -783,7 +785,10 @@ private struct ApplySummary {
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 10) {
-                if kinds.count > 1 {
+                if usesBatching {
+                    Label(L10n.format("%d baris sumber akan diperiksa per 1.000 baris berdasarkan primary key. Rincian perubahan tersedia setelah sinkronisasi selesai.", sourceRowCount), systemImage: "arrow.triangle.2.circlepath")
+                        .font(SmallFont.subheadline).foregroundStyle(.secondary)
+                } else if kinds.count > 1 {
                     Picker("Jenis perubahan", selection: $kind) {
                         ForEach(kinds) { option in
                             Text(verbatim: "\(option.title) (\(option.count))").tag(option.id)
@@ -822,6 +827,9 @@ private struct ApplySummary {
                 Image(systemName: "tablecells").foregroundStyle(.secondary)
                 Text(table).font(.headline)
                 Spacer()
+                if usesBatching {
+                    Text(L10n.format("%d baris · batch", sourceRowCount)).foregroundStyle(.secondary)
+                }
                 if inserted > 0 { Text(L10n.format("+%d tambah", inserted)).foregroundStyle(.green) }
                 if updated > 0 { Text(L10n.format("~%d ubah", updated)).foregroundStyle(.blue) }
                 if deleted > 0 { Text(L10n.format("−%d hapus", deleted)).foregroundStyle(.orange) }
@@ -833,7 +841,7 @@ private struct ApplySummary {
         }
         .padding(12)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-        .task(id: requestKey) { if expanded { await loadDetails() } }
+        .task(id: requestKey) { if expanded && !usesBatching { await loadDetails() } }
     }
 
     private func loadDetails() async {
@@ -926,6 +934,7 @@ private struct ApplySummary {
     @State private var autoHandleForeignKeys = false
     @State private var removeExtraTables = false
     @State private var removeExtraRows = false
+    @State private var transactionalDataSync = true
     @State private var confirmation = ""
     @State private var acknowledgeDestructive = false
     @State private var previewInput: [String: Any]?
@@ -1090,9 +1099,10 @@ private struct ApplySummary {
               let destination = endpoint(target, password: targetPassword, database: targetDatabase) else { return nil }
         var options: [String: Any] = ["destructiveSchema": destructiveSchema,
                                       "removeExtraForeignKeys": removeExtraForeignKeys,
-                                      "autoHandleForeignKeys": autoHandleForeignKeys,
-                                      "removeExtraTables": removeExtraTables,
-                                      "removeExtraRows": removeExtraRows]
+                                       "autoHandleForeignKeys": autoHandleForeignKeys,
+                                       "removeExtraTables": removeExtraTables,
+                                       "removeExtraRows": removeExtraRows,
+                                       "transactionalDataSync": transactionalDataSync]
         let tables = selectedTables.split(whereSeparator: { $0 == "," || $0.isNewline })
             .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         if !tables.isEmpty { options["tables"] = tables }
@@ -1352,6 +1362,12 @@ private struct ApplySummary {
                             Toggle("Hapus tabel tambahan di tujuan", isOn: $removeExtraTables)
                         } else {
                             Toggle("Hapus baris tambahan di tujuan", isOn: $removeExtraRows)
+                            Toggle("Gunakan satu transaksi (batalkan semua jika gagal)", isOn: $transactionalDataSync)
+                            Text(transactionalDataSync
+                                 ? "Untuk MySQL/InnoDB, seluruh batch diterapkan bersama. Jika satu batch gagal, semua perubahan data dibatalkan."
+                                 : "Setiap batch disimpan terpisah. Lebih ringan untuk tabel sangat besar, tetapi batch yang sudah selesai tidak dapat dibatalkan jika batch berikutnya gagal.")
+                                .font(SmallFont.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -1505,13 +1521,14 @@ private struct ApplySummary {
         let data = preview["data"] as? [[String: Any]] ?? []
         let tableNames = orderedTableNames(in: schema)
         let blockerGroups = groupedBlockers(blockers)
+        let batchTables = data.filter { $0["batch"] as? Bool ?? false }
         let destructiveCount = mode == "structure"
             ? schema.filter { isDestructive($0["statement"] as? String ?? "") }.count
             : data.reduce(0) { $0 + ($1["delete"] as? Int ?? 0) }
         let dataChangeCount = data.reduce(0) { total, item in
             total + (item["insert"] as? Int ?? 0) + (item["update"] as? Int ?? 0) + (item["delete"] as? Int ?? 0)
         }
-        let changeCount = mode == "structure" ? schema.count : dataChangeCount
+        let changeCount = mode == "structure" ? schema.count : dataChangeCount + batchTables.count
         let hasOptionBlocker = blockers.contains {
             $0.contains(L10n.text("Aktifkan opsi")) || $0.contains(L10n.text("Aktifkan opsi hapus"))
         }
@@ -1655,6 +1672,7 @@ private struct ApplySummary {
                         }
                     } else {
                         let changed = data.filter { item in
+                            (item["batch"] as? Bool ?? false) ||
                             (item["insert"] as? Int ?? 0) + (item["update"] as? Int ?? 0) +
                                 (item["delete"] as? Int ?? 0) + (item["extraRows"] as? Int ?? 0) > 0
                         }

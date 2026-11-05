@@ -9,12 +9,19 @@ struct NativeSyncOptions: Sendable {
     let autoHandleForeignKeys: Bool
     let removeExtraTables: Bool
     let removeExtraRows: Bool
+    let transactionalDataSync: Bool
 }
 
 struct NativeStructureRequest: Sendable {
     let source: NativeDatabaseEndpoint
     let destination: NativeDatabaseEndpoint
     let options: NativeSyncOptions
+
+    init(source: NativeDatabaseEndpoint, destination: NativeDatabaseEndpoint, options: NativeSyncOptions) {
+        self.source = source
+        self.destination = destination
+        self.options = options
+    }
 
     init?(dictionary: [String: Any]) {
         guard let source = Self.endpoint(dictionary["source"]),
@@ -28,7 +35,8 @@ struct NativeStructureRequest: Sendable {
             removeExtraForeignKeys: options["removeExtraForeignKeys"] as? Bool ?? false,
             autoHandleForeignKeys: options["autoHandleForeignKeys"] as? Bool ?? false,
             removeExtraTables: options["removeExtraTables"] as? Bool ?? false,
-            removeExtraRows: options["removeExtraRows"] as? Bool ?? false
+            removeExtraRows: options["removeExtraRows"] as? Bool ?? false,
+            transactionalDataSync: options["transactionalDataSync"] as? Bool ?? true
         )
     }
 

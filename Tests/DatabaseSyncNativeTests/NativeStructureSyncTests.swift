@@ -63,7 +63,8 @@ final class NativeStructureSyncTests: XCTestCase {
         let plan = try structureDiff(table: "unit_organisasi", sourceDdl: source, targetDdl: target,
                                      options: NativeSyncOptions(tables: [], destructiveSchema: true,
                                                                 removeExtraForeignKeys: false, autoHandleForeignKeys: true,
-                                                                removeExtraTables: false, removeExtraRows: false))
+                                                                removeExtraTables: false, removeExtraRows: false,
+                                                                transactionalDataSync: true))
 
         XCTAssertEqual(plan.statements, ["ALTER TABLE `unit_organisasi` DROP COLUMN `one_payment_unit_id`"])
     }
@@ -122,7 +123,7 @@ final class NativeStructureSyncTests: XCTestCase {
 
     private func options(autoHandleForeignKeys: Bool) -> NativeSyncOptions {
         NativeSyncOptions(tables: [], destructiveSchema: false, removeExtraForeignKeys: false,
-                          autoHandleForeignKeys: autoHandleForeignKeys, removeExtraTables: false,
-                          removeExtraRows: false)
+                           autoHandleForeignKeys: autoHandleForeignKeys, removeExtraTables: false,
+                          removeExtraRows: false, transactionalDataSync: true)
     }
 }

@@ -2,6 +2,9 @@ import Foundation
 import CryptoKit
 import MySQLNIO
 
+private let snapshotRowLimit = 50_000
+private let batchRowLimit = 1_000
+
 /// Snapshot data yang dipakai engine native sebelum transaksi apply dimulai.
 /// Nilai disimpan sebagai string/NULL karena MySQLNIO mengirim hasil SELECT dalam bentuk teks.
 struct NativeRow: Sendable, Hashable, Codable {
@@ -25,6 +28,24 @@ private func nativeRowKey(_ row: NativeRow, columns: [String]) -> String {
 
 private func nativeRowsEqual(_ lhs: NativeRow, _ rhs: NativeRow, columns: [String]) -> Bool {
     columns.allSatisfy { lhs.values[$0] ?? nil == rhs.values[$0] ?? nil }
+}
+
+func nativeBatchSourceSQL(table: String, columns: [String], keyColumns: [String], hasCursor: Bool) throws -> String {
+    let quotedTable = try quoteIdentifier(table)
+    let quotedColumns = try columns.map(quoteIdentifier).joined(separator: ", ")
+    let quotedKeys = try keyColumns.map(quoteIdentifier).joined(separator: ", ")
+    let predicate = hasCursor
+        ? " WHERE (\(quotedKeys)) > (\(Array(repeating: "?", count: keyColumns.count).joined(separator: ", ")))"
+        : ""
+    return "SELECT \(quotedColumns) FROM \(quotedTable)\(predicate) ORDER BY \(quotedKeys) LIMIT \(batchRowLimit)"
+}
+
+func nativeBatchTargetSQL(table: String, columns: [String], keyColumns: [String], rowCount: Int) throws -> String {
+    let quotedTable = try quoteIdentifier(table)
+    let quotedColumns = try columns.map(quoteIdentifier).joined(separator: ", ")
+    let keyPredicate = try keyColumns.map { "\(try quoteIdentifier($0)) <=> ?" }.joined(separator: " AND ")
+    let predicate = Array(repeating: "(\(keyPredicate))", count: rowCount).joined(separator: " OR ")
+    return "SELECT \(quotedColumns) FROM \(quotedTable) WHERE \(predicate)"
 }
 
 /// Urutan fisik kolom tidak mengubah makna sebuah baris. Data dibandingkan dan
@@ -90,11 +111,14 @@ struct NativeDataPlanItem: Sendable {
     let targetDDL: String
     let diff: NativeDataDiff
     let fingerprint: String
+    let usesBatching: Bool
+    let sourceRowCount: Int
 
     func previewDictionary() -> [String: Any] {
         ["table": table, "tableFingerprint": fingerprint,
-         "insert": diff.inserts.count, "update": diff.updates.count,
-         "delete": diff.deletes.count, "extraRows": diff.extraRows.count]
+          "insert": diff.inserts.count, "update": diff.updates.count,
+          "delete": diff.deletes.count, "extraRows": diff.extraRows.count,
+          "batch": usesBatching, "sourceRowCount": sourceRowCount]
     }
 }
 
@@ -196,7 +220,7 @@ extension NativeMySQLAdapter {
         let ordered = orderTablesAllowingCircularRelationships(tables, parents: parents)
         var blockers: [String] = [], warnings: [String] = [], items: [NativeDataPlanItem] = [], fingerprints: [String] = []
         if !circularTables.isEmpty {
-            warnings.append(L10n.format("Data pada tabel dengan relasi foreign key melingkar akan diterapkan dengan pemeriksaan foreign key dinonaktifkan sementara: %@.", circularTables.sorted().joined(separator: ", ")))
+            warnings.append(L10n.format("Data pada tabel dengan relasi foreign key melingkar akan diterapkan dengan pemeriksaan foreign key dinonaktifkan sementara: %@. Ini diperlukan ketika foreign key saling bergantung, termasuk kolom NOT NULL; urutan insert saja tidak dapat memenuhi siklus.", circularTables.sorted().joined(separator: ", ")))
         }
 
         for table in ordered {
@@ -218,19 +242,42 @@ extension NativeMySQLAdapter {
                 blockers.append(L10n.format("%@: kolom generated/invisible belum didukung untuk sinkronisasi data.", table))
                 continue
             }
-            let sourceSnapshot = try await rows(source, table: table)
-            let targetSnapshot = try await rows(destination, table: table)
-            guard let columns = canonicalColumns(source: sourceSnapshot.columns, destination: targetSnapshot.columns) else {
-                let sourceOnly = Set(sourceSnapshot.columns).subtracting(targetSnapshot.columns).sorted().joined(separator: ", ")
-                let destinationOnly = Set(targetSnapshot.columns).subtracting(sourceSnapshot.columns).sorted().joined(separator: ", ")
+            let sourceCount = try await rowCount(source, table: table)
+            let targetCount = try await rowCount(destination, table: table)
+            let sourceColumns = try await tableColumns(source, table: table)
+            let targetColumns = try await tableColumns(destination, table: table)
+            guard let columns = canonicalColumns(source: sourceColumns, destination: targetColumns) else {
+                let sourceOnly = Set(sourceColumns).subtracting(targetColumns).sorted().joined(separator: ", ")
+                let destinationOnly = Set(targetColumns).subtracting(sourceColumns).sorted().joined(separator: ", ")
                 blockers.append(L10n.format("%@: daftar kolom sumber dan tujuan berbeda. Hanya di sumber: %@. Hanya di tujuan: %@.",
                                             table, sourceOnly.isEmpty ? "—" : sourceOnly,
                                             destinationOnly.isEmpty ? "—" : destinationOnly))
                 continue
             }
+            let primary = try await primaryKey(source, table: table)
+            if !primary.isEmpty {
+                if request.options.removeExtraRows {
+                    blockers.append(L10n.format("%@: hapus baris tambahan belum didukung untuk sinkronisasi batch. Nonaktifkan opsi hapus baris tambahan.", table))
+                    continue
+                }
+                let tableFingerprint = nativeFingerprint([table, sourceDDL, targetDDL, "batch", String(sourceCount), String(targetCount)])
+                items.append(NativeDataPlanItem(table: table, columns: columns, keyColumns: primary,
+                                                sourceDDL: sourceDDL, targetDDL: targetDDL,
+                                                diff: NativeDataDiff(inserts: [], updates: [], deletes: [], extraRows: []),
+                                                fingerprint: tableFingerprint, usesBatching: true,
+                                                sourceRowCount: sourceCount))
+                fingerprints.append(table + ":" + tableFingerprint)
+                warnings.append(L10n.format("%@: %d baris akan diperiksa per %d baris menggunakan primary key. Pratinjau tidak merinci setiap perubahan.", table, sourceCount, batchRowLimit))
+                continue
+            }
+            if sourceCount > snapshotRowLimit || targetCount > snapshotRowLimit {
+                blockers.append(L10n.format("%@: lebih dari %d baris dan tidak memiliki primary key; sinkronisasi batch tidak aman.", table, snapshotRowLimit))
+                continue
+            }
+            let sourceSnapshot = try await rows(source, table: table)
+            let targetSnapshot = try await rows(destination, table: table)
             let sourceRows = (columns: columns, rows: sortRows(sourceSnapshot.rows))
             let targetRows = (columns: columns, rows: sortRows(targetSnapshot.rows))
-            let primary = try await primaryKey(source, table: table)
             let unique = primary.isEmpty ? try await uniqueKey(source, table: table, columns: sourceRows.columns,
                                                                 sourceRows: sourceRows.rows, targetRows: targetRows.rows) : []
             let keys = primary.isEmpty ? unique : primary
@@ -248,8 +295,9 @@ extension NativeMySQLAdapter {
             let tableFingerprint = fingerprint(table: table, sourceDDL: sourceDDL, targetDDL: targetDDL,
                                                sourceRows: sourceRows.rows, targetRows: targetRows.rows)
             items.append(NativeDataPlanItem(table: table, columns: sourceRows.columns, keyColumns: keys,
-                                            sourceDDL: sourceDDL, targetDDL: targetDDL,
-                                            diff: diff, fingerprint: tableFingerprint))
+                                             sourceDDL: sourceDDL, targetDDL: targetDDL,
+                                             diff: diff, fingerprint: tableFingerprint, usesBatching: false,
+                                             sourceRowCount: sourceRows.rows.count))
             fingerprints.append(table + ":" + tableFingerprint)
         }
         let overall = nativeFingerprint(fingerprints + blockers.sorted())
@@ -262,8 +310,11 @@ extension NativeMySQLAdapter {
         guard plan.blockers.isEmpty else { throw BridgeError.message(L10n.format("Ada masalah yang harus diselesaikan sebelum sinkronisasi: %@", plan.blockers.joined(separator: " "))) }
         guard plan.fingerprint == fingerprint else { throw BridgeError.message("Database berubah sejak pratinjau. Jalankan pratinjau ulang.") }
         let connection = try await connect(request.destination, database: request.destination.database)
-        defer { _ = connection.close() }
-        _ = try await connection.simpleQuery("START TRANSACTION").get()
+        let source = try await connect(request.source, database: request.source.database)
+        defer { _ = connection.close(); _ = source.close() }
+        if request.options.transactionalDataSync {
+            _ = try await connection.simpleQuery("START TRANSACTION").get()
+        }
         var inserted = 0, updated = 0, deleted = 0
         var foreignKeyChecksDisabled = false
         do {
@@ -272,15 +323,30 @@ extension NativeMySQLAdapter {
                 foreignKeyChecksDisabled = true
             }
             for item in plan.items {
+                if item.usesBatching {
+                    let result = try await applyBatches(source: source, destination: connection, item: item,
+                                                        transactional: request.options.transactionalDataSync)
+                    inserted += result.inserted
+                    updated += result.updated
+                    continue
+                }
+                if !request.options.transactionalDataSync {
+                    _ = try await connection.simpleQuery("START TRANSACTION").get()
+                }
                 inserted += try await insertRows(connection, item: item)
                 updated += try await updateRows(connection, item: item)
+                deleted += try await deleteRows(connection, item: item)
+                if !request.options.transactionalDataSync {
+                    _ = try await connection.simpleQuery("COMMIT").get()
+                }
             }
-            for item in plan.items.reversed() { deleted += try await deleteRows(connection, item: item) }
             if foreignKeyChecksDisabled {
                 _ = try await connection.simpleQuery("SET FOREIGN_KEY_CHECKS = 1").get()
                 foreignKeyChecksDisabled = false
             }
-            _ = try await connection.simpleQuery("COMMIT").get()
+            if request.options.transactionalDataSync {
+                _ = try await connection.simpleQuery("COMMIT").get()
+            }
         } catch {
             if foreignKeyChecksDisabled {
                 _ = try? await connection.simpleQuery("SET FOREIGN_KEY_CHECKS = 1").get()
@@ -311,13 +377,69 @@ extension NativeMySQLAdapter {
     }
 
     private func rows(_ connection: MySQLConnection, table: String) async throws -> (columns: [String], rows: [NativeRow]) {
-        let sql = "SELECT * FROM \(try quoteIdentifier(table)) LIMIT 50001"
+        let sql = "SELECT * FROM \(try quoteIdentifier(table)) LIMIT \(snapshotRowLimit + 1)"
         let result = try await connection.simpleQuery(sql).get()
-        guard result.count <= 50_000 else { throw BridgeError.message(L10n.format("%@: lebih dari 50.000 baris; batasi tabel yang dipilih.", table)) }
+        guard result.count <= snapshotRowLimit else { throw BridgeError.message(L10n.format("%@: lebih dari %d baris; batasi tabel yang dipilih.", table, snapshotRowLimit)) }
         let columns = try await tableColumns(connection, table: table)
         return (columns, result.map { row in
             NativeRow(values: Dictionary(uniqueKeysWithValues: columns.map { ($0, row.column($0)?.string) }))
         })
+    }
+
+    private func rowCount(_ connection: MySQLConnection, table: String) async throws -> Int {
+        let result = try await connection.simpleQuery("SELECT COUNT(*) AS `count` FROM \(try quoteIdentifier(table))").get()
+        return Int(result.first?.column("count")?.string ?? "") ?? 0
+    }
+
+    private func batchRows(_ connection: MySQLConnection, item: NativeDataPlanItem,
+                           after cursor: NativeRow?) async throws -> [NativeRow] {
+        let cursorValues = cursor.map { binds($0, columns: item.keyColumns) } ?? []
+        let sql = try nativeBatchSourceSQL(table: item.table, columns: item.columns,
+                                           keyColumns: item.keyColumns, hasCursor: cursor != nil)
+        let result = try await connection.query(sql, cursorValues).get()
+        return result.map { row in
+            NativeRow(values: Dictionary(uniqueKeysWithValues: item.columns.map { ($0, row.column($0)?.string) }))
+        }
+    }
+
+    private func targetRows(_ connection: MySQLConnection, item: NativeDataPlanItem,
+                            matching sourceRows: [NativeRow]) async throws -> [NativeRow] {
+        guard !sourceRows.isEmpty else { return [] }
+        let values = sourceRows.flatMap { binds($0, columns: item.keyColumns) }
+        let sql = try nativeBatchTargetSQL(table: item.table, columns: item.columns,
+                                           keyColumns: item.keyColumns, rowCount: sourceRows.count)
+        let result = try await connection.query(sql, values).get()
+        return result.map { row in
+            NativeRow(values: Dictionary(uniqueKeysWithValues: item.columns.map { ($0, row.column($0)?.string) }))
+        }
+    }
+
+    private func applyBatches(source: MySQLConnection, destination: MySQLConnection,
+                              item: NativeDataPlanItem, transactional: Bool) async throws -> (inserted: Int, updated: Int) {
+        var cursor: NativeRow?
+        var inserted = 0, updated = 0
+        while true {
+            let sourceRows = try await batchRows(source, item: item, after: cursor)
+            guard !sourceRows.isEmpty else { break }
+            let destinationRows = try await targetRows(destination, item: item, matching: sourceRows)
+            let diff = try nativeDiffRows(source: sourceRows, target: destinationRows, columns: item.columns,
+                                          keyColumns: item.keyColumns, removeExtraRows: false)
+            let batchItem = NativeDataPlanItem(table: item.table, columns: item.columns, keyColumns: item.keyColumns,
+                                               sourceDDL: item.sourceDDL, targetDDL: item.targetDDL, diff: diff,
+                                               fingerprint: item.fingerprint, usesBatching: true,
+                                               sourceRowCount: sourceRows.count)
+            if !transactional { _ = try await destination.simpleQuery("START TRANSACTION").get() }
+            do {
+                inserted += try await insertRows(destination, item: batchItem)
+                updated += try await updateRows(destination, item: batchItem)
+                if !transactional { _ = try await destination.simpleQuery("COMMIT").get() }
+            } catch {
+                _ = try? await destination.simpleQuery("ROLLBACK").get()
+                throw error
+            }
+            cursor = sourceRows.last
+        }
+        return (inserted, updated)
     }
 
     private func tableColumns(_ connection: MySQLConnection, table: String) async throws -> [String] {
