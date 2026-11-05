@@ -420,7 +420,7 @@ struct EndpointPane: View {
     }
 }
 
-struct ConnectionManagerView: View {
+@MainActor struct ConnectionManagerView: View {
     @ObservedObject var model: SyncModel
     @Environment(\.dismiss) private var dismiss
     @State private var selectedID: String?
@@ -900,7 +900,7 @@ private struct ApplySummary {
     }
 }
 
-struct ContentView: View {
+@MainActor struct ContentView: View {
     @StateObject private var model = SyncModel()
     @State private var mode = "structure"
     @State private var sourceID = ""
