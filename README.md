@@ -37,7 +37,10 @@ Source and destination must use the same supported driver. MySQL and MariaDB use
 
 ## Install
 
-Download a `DBSync-<version>-arm64.zip` file from the GitHub release, unzip it, then move `DBSync.app` to `/Applications`.
+Download the matching file from the GitHub release, unzip it, then move `DBSync.app` to `/Applications`:
+
+- Apple Silicon (M1/M2/M3/M4): `DBSync-<version>-arm64.zip`
+- Intel Mac: `DBSync-<version>-x86_64.zip`
 
 The app is not notarized. On first launch, macOS may block it. Open the app once, then select **Open Anyway** in **System Settings > Privacy & Security**. Alternatively:
 
