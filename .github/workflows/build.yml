@@ -12,6 +12,10 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Swift 6
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
       - name: Show Swift version
         run: swift --version
       - name: Run tests
@@ -27,6 +31,10 @@ jobs:
       DBSYNC_BUILD: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Swift 6
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
       - name: Build app bundle
         run: zsh scripts/run-native.sh --no-open
       - name: Package app
