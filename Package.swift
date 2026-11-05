@@ -9,7 +9,9 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/vapor/mysql-nio.git", exact: "1.8.0"),
-        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.65.0")
+        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.80.0"),
+        .package(url: "https://github.com/apple/swift-collections.git", exact: "1.1.4"),
+        .package(url: "https://github.com/apple/swift-log.git", exact: "1.6.3")
     ],
     targets: [
         .executableTarget(
