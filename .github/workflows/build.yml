@@ -1,9 +1,8 @@
-name: Build DBSync
+name: Test DBSync
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -20,55 +19,3 @@ jobs:
         run: swift --version
       - name: Run tests
         run: swift test --disable-sandbox
-
-  build:
-    needs: test
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-14
-            architecture: arm64
-          - runner: macos-13
-            architecture: x86_64
-    runs-on: ${{ matrix.runner }}
-    env:
-      DBSYNC_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.0.0-dev' }}
-      DBSYNC_BUILD: ${{ github.run_number }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Swift 6.1
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.1"
-      - name: Build app bundle
-        run: zsh scripts/run-native.sh --no-open
-      - name: Package app
-        run: |
-          mkdir -p dist
-          ditto -c -k --sequesterRsrc --keepParent .build/DBSync.app "dist/DBSync-${DBSYNC_VERSION#v}-${{ matrix.architecture }}.zip"
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: DBSync-${{ github.ref_name }}-${{ matrix.architecture }}
-          path: dist/*.zip
-          if-no-files-found: error
-          retention-days: 30
-
-  release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: macos-14
-    permissions:
-      contents: write
-    steps:
-      - name: Download architecture artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: DBSync-${{ github.ref_name }}-*
-          path: dist
-          merge-multiple: true
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --generate-notes --title "DBSync $GITHUB_REF_NAME"

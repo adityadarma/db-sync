@@ -2,7 +2,7 @@
 set -euo pipefail
 repo_root="${0:A:h:h}"
 app_root="$repo_root/.build/DBSync.app"
-version="${DBSYNC_VERSION:-}"
+version="${DBSYNC_VERSION#v}"
 build="${DBSYNC_BUILD:-}"
 mkdir -p "$app_root/Contents/MacOS"
 mkdir -p "$app_root/Contents/Resources"
@@ -19,7 +19,7 @@ fi
 if [[ -n "$build" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build" "$app_root/Contents/Info.plist"
 fi
-for locale in id en; do
+for locale in en; do
   mkdir -p "$app_root/Contents/Resources/$locale.lproj"
   cp "$repo_root/AppAssets/$locale.lproj/Localizable.strings" "$app_root/Contents/Resources/$locale.lproj/Localizable.strings"
 done

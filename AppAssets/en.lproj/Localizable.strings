@@ -258,3 +258,12 @@
 "URL koneksi tidak valid. Pastikan berisi driver, user, host, dan port." = "Invalid connection URL. Include the driver, user, host, and port.";
 "Driver pada URL belum didukung. Gunakan mysql:// atau mariadb://." = "The URL driver is not supported. Use mysql:// or mariadb://.";
 "Impor koneksi…" = "Import connection…";
+"%@: %d baris akan diperiksa per %d baris menggunakan primary key. Pratinjau tidak merinci setiap perubahan." = "%@: %d rows will be checked in batches of %d using the primary key. The preview does not list every change.";
+"%@: lebih dari %d baris dan tidak memiliki primary key; sinkronisasi batch tidak aman." = "%@: has more than %d rows and no primary key; batch synchronization is not safe.";
+"%@: hapus baris tambahan belum didukung untuk sinkronisasi batch. Nonaktifkan opsi hapus baris tambahan." = "%@: deleting extra rows is not supported for batch synchronization. Disable the delete extra rows option.";
+"Data pada tabel dengan relasi foreign key melingkar akan diterapkan dengan pemeriksaan foreign key dinonaktifkan sementara: %@. Ini diperlukan ketika foreign key saling bergantung, termasuk kolom NOT NULL; urutan insert saja tidak dapat memenuhi siklus." = "Data for tables with circular foreign key relationships will be applied with foreign key checks temporarily disabled: %@. This is required when foreign keys depend on each other, including NOT NULL columns; insert order alone cannot satisfy the cycle.";
+"%d baris sumber akan diperiksa per 1.000 baris berdasarkan primary key. Rincian perubahan tersedia setelah sinkronisasi selesai." = "%d source rows will be checked in batches of 1,000 by primary key. Change details are available after synchronization completes.";
+"%d baris · batch" = "%d rows · batch";
+"Gunakan satu transaksi (batalkan semua jika gagal)" = "Use one transaction (roll back all changes on failure)";
+"Untuk MySQL/InnoDB, seluruh batch diterapkan bersama. Jika satu batch gagal, semua perubahan data dibatalkan." = "For MySQL/InnoDB, all batches are applied together. If one batch fails, all data changes are rolled back.";
+"Setiap batch disimpan terpisah. Lebih ringan untuk tabel sangat besar, tetapi batch yang sudah selesai tidak dapat dibatalkan jika batch berikutnya gagal." = "Each batch is committed separately. This uses fewer resources for very large tables, but completed batches cannot be rolled back if a later batch fails.";

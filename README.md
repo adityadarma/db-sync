@@ -27,7 +27,7 @@ Source and destination must use the same supported driver. MySQL and MariaDB use
 - SSH tunnel support through the macOS OpenSSH client.
 - App-managed connections stored in Application Support; passwords stored in macOS Keychain.
 - Import compatible MySQL/MariaDB connection metadata from TablePlus and from `mysql://` or `mariadb://` URLs.
-- English and Indonesian interface localization.
+- English-only interface.
 
 ## Requirements
 
@@ -87,6 +87,17 @@ swift test --disable-sandbox --filter MySQLDataSyncIntegrationTests
 ```
 
 The integration test is skipped when these environment variables are absent.
+
+## Release
+
+Pushes to `main` and pull requests run tests only. To create a release, push a version tag:
+
+```zsh
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+The release workflow runs tests, builds `arm64` and `x86_64` ZIPs, then creates a GitHub Release. Tag `v1.2.0` becomes app version `1.2.0`; the build number uses the GitHub Actions run number.
 
 ## Use
 
