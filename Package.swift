@@ -18,7 +18,9 @@ let package = Package(
             name: "DatabaseSyncNative",
             dependencies: [
                 .product(name: "MySQLNIO", package: "mysql-nio"),
-                .product(name: "NIOCore", package: "swift-nio")
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "DequeModule", package: "swift-collections"),
+                .product(name: "Logging", package: "swift-log")
             ],
             linkerSettings: [.linkedFramework("Security")]
         ),

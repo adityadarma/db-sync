@@ -624,7 +624,7 @@ struct EndpointPane: View {
     }
 }
 
-struct ConnectionURLImportView: View {
+@MainActor struct ConnectionURLImportView: View {
     @ObservedObject var model: SyncModel
     @Environment(\.dismiss) private var dismiss
     @State private var connectionURL = ""

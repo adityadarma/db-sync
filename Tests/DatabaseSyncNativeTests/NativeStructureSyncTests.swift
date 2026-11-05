@@ -41,6 +41,33 @@ final class NativeStructureSyncTests: XCTestCase {
         XCTAssertTrue(plan.statements[3].contains("ADD CONSTRAINT `orders_customer_id_foreign`"))
     }
 
+    func testAutomaticHandlingKeepsUnrelatedForeignKeysWhileDroppingExtraColumn() throws {
+        let source = """
+        CREATE TABLE `unit_organisasi` (
+          `id` bigint NOT NULL,
+          `bidang_id` bigint NOT NULL,
+          KEY `unit_organisasi_bidang_id_index` (`bidang_id`),
+          CONSTRAINT `unit_organisasi_bidang_id_foreign` FOREIGN KEY (`bidang_id`) REFERENCES `master_bidang_organisasi` (`id`)
+        ) ENGINE=InnoDB
+        """
+        let target = """
+        CREATE TABLE `unit_organisasi` (
+          `id` bigint NOT NULL,
+          `bidang_id` bigint NOT NULL,
+          `one_payment_unit_id` bigint DEFAULT NULL,
+          KEY `unit_organisasi_bidang_id_index` (`bidang_id`),
+          CONSTRAINT `unit_organisasi_bidang_id_foreign` FOREIGN KEY (`bidang_id`) REFERENCES `master_bidang_organisasi` (`id`)
+        ) ENGINE=InnoDB
+        """
+
+        let plan = try structureDiff(table: "unit_organisasi", sourceDdl: source, targetDdl: target,
+                                     options: NativeSyncOptions(tables: [], destructiveSchema: true,
+                                                                removeExtraForeignKeys: false, autoHandleForeignKeys: true,
+                                                                removeExtraTables: false, removeExtraRows: false))
+
+        XCTAssertEqual(plan.statements, ["ALTER TABLE `unit_organisasi` DROP COLUMN `one_payment_unit_id`"])
+    }
+
     func testParsesDropsSoMissingObjectsCanBeSkippedDuringApply() {
         XCTAssertEqual(
             dropOperation(in: "ALTER TABLE `customers` DROP INDEX `customers_branch_id_foreign`"),

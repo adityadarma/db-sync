@@ -202,6 +202,20 @@ private func indexColumns(_ definition: String) -> [String]? {
     }
 }
 
+private func foreignKeyColumns(_ definition: String) -> [String]? {
+    guard let foreignKeyRange = definition.range(of: "FOREIGN KEY", options: .caseInsensitive),
+          let referencesRange = definition.range(of: "REFERENCES", options: .caseInsensitive,
+                                                range: foreignKeyRange.upperBound..<definition.endIndex) else {
+        return nil
+    }
+    return indexColumns(String(definition[foreignKeyRange.upperBound..<referencesRange.lowerBound]))
+}
+
+private func index(_ definition: String, supportsForeignKey columns: [String]) -> Bool {
+    guard let indexColumns = indexColumns(definition), indexColumns.count >= columns.count else { return false }
+    return Array(indexColumns.prefix(columns.count)) == columns
+}
+
 private func cleanOptions(_ options: String) -> String {
     normalized(options).replacingOccurrences(of: "AUTO_INCREMENT=…", with: "")
         .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
@@ -231,12 +245,17 @@ func structureDiff(table: String, sourceDdl: String, targetDdl: String?, options
     let foreignKeysDiffer = Set(source.foreignKeys.keys).union(target.foreignKeys.keys).contains { name in
         normalized(source.foreignKeys[name]) != normalized(target.foreignKeys[name])
     }
-    let hasForeignKeys = !source.foreignKeys.isEmpty || !target.foreignKeys.isEmpty
     let extraForeignKeys = target.foreignKeys.keys.filter { source.foreignKeys[$0] == nil }
-    let hasSchemaChange = !changedColumns.isEmpty || !removedColumns.isEmpty ||
-        !removedIndexes.isEmpty || !addedIndexes.isEmpty || foreignKeysDiffer
-    let canRebuildForeignKeys = options.autoHandleForeignKeys && hasForeignKeys && hasSchemaChange &&
-        (extraForeignKeys.isEmpty || options.removeExtraForeignKeys)
+    let changedColumnNames = Set(changedColumns.keys).union(removedColumns)
+    let changedIndexDefinitions = Array(removedIndexes.values) + Array(addedIndexes.values)
+    let foreignKeysToRebuild = Set(source.foreignKeys.keys).union(target.foreignKeys.keys).filter { name in
+        guard normalized(source.foreignKeys[name]) == normalized(target.foreignKeys[name]) else { return true }
+        guard let definition = source.foreignKeys[name], let columns = foreignKeyColumns(definition) else { return false }
+        return !changedColumnNames.isDisjoint(with: columns) || changedIndexDefinitions.contains {
+            index($0, supportsForeignKey: columns)
+        }
+    }
+    let canRebuildForeignKeys = options.autoHandleForeignKeys && !foreignKeysToRebuild.isEmpty
 
     if !extraForeignKeys.isEmpty && !options.removeExtraForeignKeys {
         for name in extraForeignKeys.sorted() {
@@ -245,10 +264,10 @@ func structureDiff(table: String, sourceDdl: String, targetDdl: String?, options
     }
 
     if canRebuildForeignKeys {
-        for name in target.foreignKeys.keys.sorted() {
+        for name in foreignKeysToRebuild.sorted() where target.foreignKeys[name] != nil {
             beforeChanges.append("ALTER TABLE \(quotedTable) DROP FOREIGN KEY \(try quoteIdentifier(name))")
         }
-        for name in source.foreignKeys.keys.sorted() {
+        for name in foreignKeysToRebuild.sorted() {
             guard let definition = source.foreignKeys[name] else { continue }
             afterChanges.append("ALTER TABLE \(quotedTable) ADD \(definition)")
         }
@@ -272,7 +291,7 @@ func structureDiff(table: String, sourceDdl: String, targetDdl: String?, options
 
     for (name, definition) in changedColumns.sorted(by: { $0.key < $1.key }) {
         let old = target.columns[name]
-        if hasForeignKeys && !canRebuildForeignKeys {
+        if !foreignKeysToRebuild.isEmpty && !canRebuildForeignKeys {
             blockers.append(L10n.format("Perubahan kolom pada tabel dengan foreign key perlu penanganan manual: %@.%@.", table, name))
         } else {
             statements.append("ALTER TABLE \(quotedTable) \(old == nil ? "ADD" : "MODIFY") COLUMN \(definition)")
@@ -280,7 +299,7 @@ func structureDiff(table: String, sourceDdl: String, targetDdl: String?, options
         }
     }
     for name in removedColumns.sorted() {
-        if hasForeignKeys && !canRebuildForeignKeys {
+        if !foreignKeysToRebuild.isEmpty && !canRebuildForeignKeys {
             blockers.append(L10n.format("Kolom tambahan pada tabel dengan foreign key perlu penanganan manual: %@.%@.", table, name))
         } else if !options.destructiveSchema {
             blockers.append(L10n.format("Kolom tambahan pada tujuan: %@.%@. Aktifkan opsi hapus kolom dan indeks tambahan untuk menghapusnya.", table, name))
@@ -290,7 +309,7 @@ func structureDiff(table: String, sourceDdl: String, targetDdl: String?, options
         }
     }
     for (name, _) in removedIndexes.sorted(by: { $0.key < $1.key }) {
-        if hasForeignKeys && !canRebuildForeignKeys {
+        if !foreignKeysToRebuild.isEmpty && !canRebuildForeignKeys {
             blockers.append(L10n.format("Perubahan indeks pada tabel dengan foreign key perlu penanganan manual: %@.%@.", table, name))
         } else if !options.destructiveSchema && source.indexes[name] == nil {
             blockers.append(L10n.format("Indeks tambahan pada tujuan: %@.%@. Aktifkan opsi hapus kolom dan indeks tambahan untuk menghapusnya.", table, name))
@@ -300,7 +319,7 @@ func structureDiff(table: String, sourceDdl: String, targetDdl: String?, options
         }
     }
     for (name, definition) in addedIndexes.sorted(by: { $0.key < $1.key }) {
-        if hasForeignKeys && !canRebuildForeignKeys {
+        if !foreignKeysToRebuild.isEmpty && !canRebuildForeignKeys {
             blockers.append(L10n.format("Perubahan indeks pada tabel dengan foreign key perlu penanganan manual: %@.%@.", table, name))
         } else {
             statements.append("ALTER TABLE \(quotedTable) ADD \(definition)")
