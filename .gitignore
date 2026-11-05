@@ -1,0 +1,21 @@
+# Swift Package Manager
+.build/
+
+# Xcode and macOS
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+.DS_Store
+
+# Local editor and agent settings
+.vscode/*.log
+.opencode/
+
+# Build and release artifacts
+dist/
+*.zip
+
+# Local credentials
+*.key
+*.p12
+*.mobileprovision

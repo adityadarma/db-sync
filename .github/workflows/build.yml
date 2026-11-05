@@ -1,0 +1,47 @@
+name: Build DBSync
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Swift version
+        run: swift --version
+      - name: Run tests
+        run: swift test --disable-sandbox
+
+  build:
+    needs: test
+    runs-on: macos-14
+    permissions:
+      contents: write
+    env:
+      DBSYNC_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.0.0-dev' }}
+      DBSYNC_BUILD: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build app bundle
+        run: zsh scripts/run-native.sh --no-open
+      - name: Package app
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent .build/DBSync.app "dist/DBSync-${DBSYNC_VERSION#v}-arm64.zip"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DBSync-${{ github.ref_name }}-arm64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --generate-notes --title "DBSync $GITHUB_REF_NAME"

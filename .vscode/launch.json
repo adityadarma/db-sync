@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:tableplus-db-sync}",
+            "name": "Debug DatabaseSyncNative",
+            "target": "DatabaseSyncNative",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug DatabaseSyncNative"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:tableplus-db-sync}",
+            "name": "Release DatabaseSyncNative",
+            "target": "DatabaseSyncNative",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release DatabaseSyncNative"
+        }
+    ]
+}
