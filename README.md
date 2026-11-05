@@ -97,7 +97,7 @@ git tag v1.2.0
 git push origin v1.2.0
 ```
 
-The release workflow runs tests, builds `arm64` and `x86_64` ZIPs, then creates a GitHub Release. Tag `v1.2.0` becomes app version `1.2.0`; the build number uses the GitHub Actions run number.
+The release workflow runs tests, builds `arm64` and `x86_64` ZIPs on GitHub's Apple Silicon runner, then creates a GitHub Release. Tag `v1.2.0` becomes app version `1.2.0`; the build number uses the GitHub Actions run number.
 
 ## Use
 

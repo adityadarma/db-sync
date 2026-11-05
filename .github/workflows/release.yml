@@ -24,12 +24,13 @@ jobs:
         include:
           - runner: macos-14
             architecture: arm64
-          - runner: macos-13
+          - runner: macos-14
             architecture: x86_64
     runs-on: ${{ matrix.runner }}
     env:
       DBSYNC_VERSION: ${{ github.ref_name }}
       DBSYNC_BUILD: ${{ github.run_number }}
+      DBSYNC_ARCH: ${{ matrix.architecture }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Swift 6.1
