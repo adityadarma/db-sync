@@ -8,8 +8,8 @@ let package = Package(
         .executable(name: "DatabaseSyncNative", targets: ["DatabaseSyncNative"])
     ],
     dependencies: [
-        .package(url: "https://github.com/vapor/mysql-nio.git", branch: "main"),
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.105.0")
+        .package(url: "https://github.com/vapor/mysql-nio.git", exact: "1.8.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.65.0")
     ],
     targets: [
         .executableTarget(
